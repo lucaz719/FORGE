@@ -1,0 +1,254 @@
+# FORGE Skill Set — Agent Knowledge Base
+# Format: skill_category.skill_name = value | notes
+# This file is auto-updated as agents learn new patterns during the build.
+
+[project]
+name = FORGE — Autonomous Compute Exchange
+domain = agentic compute marketplace
+layer = 1 (Hackathon Build)
+pattern = multi-agent pipeline with real-time settlement
+
+# ─────────────────────────────────────────────
+# ARCHITECTURE SKILLS
+# ─────────────────────────────────────────────
+
+[arch.pipeline]
+pattern = producer-consumer queue chain
+description = price_queue → Watcher publishes → Strategist consumes → plan_queue → Executor consumes
+learned_from = PRD Section 9 (Agent Pipeline)
+key_insight = Each agent is decoupled via async queues; no direct agent-to-agent calls
+
+[arch.agent_roles]
+watcher = price polling + idle detection (30s interval) | colour: blue
+strategist = batch matching + decision making (BATCH|WAIT|RUN_NOW|SUBLEASED) | colour: yellow
+executor = AMD inference call + X402 payment + receipt generation | colour: green
+pattern = separation of concerns: observe → decide → act
+
+[arch.websocket]
+pattern = server-side broadcast hub
+description = single /ws endpoint; backend pushes all events; frontend never polls
+throttle = max 1 UI render per 200ms to prevent flicker
+reconnect = 500ms exponential backoff on disconnect
+
+[arch.provider_agnostic]
+design = provider abstraction from day 1
+interface = amd_client wraps real API; mock mirrors identical interface
+reason = subsequent layers (2-6) extend, not rewrite
+
+# ─────────────────────────────────────────────
+# BACKEND SKILLS
+# ─────────────────────────────────────────────
+
+[backend.fastapi]
+pattern = async FastAPI + Uvicorn
+websocket = ConnectionManager class with broadcast()
+endpoints = REST for state reads; WebSocket for real-time stream
+models = Pydantic v2 for all data contracts
+
+[backend.langchain]
+version = 0.3.x
+pattern = tool-using agents with structured output
+agents = Watcher, Strategist, Executor each wrapped as LangChain agents
+fallback = pure Python rules if LLM latency disrupts demo (drop-if-behind schedule)
+token_cap = max_tokens=50 per call to conserve AMD credits
+
+[backend.async_pattern]
+runtime = asyncio (Python 3.11+)
+http_client = httpx async for AMD API calls
+queues = asyncio.Queue for agent pipeline (price_queue, plan_queue)
+pattern = each agent runs as asyncio task
+
+[backend.amd_client]
+endpoint = AMD_API_BASE/v1/chat/completions or inference endpoint
+model = AMD_MODEL (e.g., meta-llama/Llama-3.1-8B-Instruct)
+auth = Bearer AMD_API_KEY
+mock_trigger = AMD_API_KEY not set or connection fails
+mock_variance = ±15% price simulation; inference calls remain real
+
+[backend.batch_detection]
+algorithm = group jobs where instance_type matches AND deadline windows overlap
+split_formula = spot_rate × estimated_hours ÷ n_jobs
+decision_tree = BATCH (n>=2 compatible) | WAIT (single, flexible) | RUN_NOW (single, urgent) | SUBLEASED (Renter idle)
+
+[backend.error_handling]
+retry = exponential backoff on AMD API calls
+refund = full amount returned on job abort or provision failure
+kill_switch = POST /release-renter immediately frees Renter instance from sub-lease
+
+# ─────────────────────────────────────────────
+# PAYMENTS SKILLS
+# ─────────────────────────────────────────────
+
+[payments.x402]
+protocol = HTTP 402 Payment Required flow
+flow = server returns 402 → client includes signed payment header → request proceeds
+library = x402-python
+network = Base Sepolia testnet
+timebox = 4 hours; switch to mock if unresolved
+mock_latency = 300ms simulated
+mock_hash = deterministic from job_id + timestamp
+
+[payments.events]
+JOB_START = spot_rate × estimated_hours (charged to job submitter wallet)
+BATCH_SPLIT = spot_rate × estimated_hours ÷ n_jobs (each batcher pays proportional share)
+SUBLEASED_CREDIT = proportional share credited back to Renter wallet
+REFUND = full amount returned to user wallet on failure
+
+[payments.wallets]
+config = all 5 wallets loaded from .env
+WALLET_RENTER = Renter's wallet address
+WALLET_BATCHER_A = Batcher A wallet
+WALLET_BATCHER_B = Batcher B wallet
+WALLET_SOLO = Solo user wallet
+WALLET_AMD_PROVIDER = AMD provider receives payment
+
+# ─────────────────────────────────────────────
+# FRONTEND SKILLS
+# ─────────────────────────────────────────────
+
+[frontend.stack]
+runtime = Node.js v20 LTS
+bundler = Vite 5.x
+framework = React 18.x + TypeScript 5.x
+charts = Recharts 2.x
+deploy = Vercel (free tier)
+
+[frontend.websocket]
+hook = useSocket (custom React hook)
+reconnect = auto-reconnect with 500ms exponential backoff
+pattern = single shared socket connection; dispatch events to panel components
+
+[frontend.panels]
+layout = 2×2 responsive grid
+top_left = JobSubmit — form with model, instance_type, estimated_hours, deadline
+top_right = LiveLedger — scrolling receipt feed with strategy badges
+bottom_right = SavingsCounter — animated USD delta per user + Renter earnings
+bottom = AgentActivityLog — colour-coded scrolling log (Watcher/Strategist/Executor)
+
+[frontend.animations]
+savings_counter = animate from previous → new value over 400ms
+render_throttle = max 1 render per 200ms (prevents flicker on rapid WS events)
+price_arrow = up/down trend indicator on price feed
+
+[frontend.ux_patterns]
+batch_view = shows which jobs share instance + per-job cost breakdown
+receipt_clipboard = copy receipt hash to clipboard on click
+user_switcher = dropdown: Renter | Batcher A | Batcher B | Solo (controls job submission identity)
+
+# ─────────────────────────────────────────────
+# DEMO SKILLS
+# ─────────────────────────────────────────────
+
+[demo.scripted_path]
+duration = 90–100 seconds
+inputs = controlled: 2 Batcher jobs (same instance_type, overlapping windows) always trigger batch
+pre_warm = AMD instance pre-warmed before demo to avoid provisioning wait
+determinism = Strategist decisions are deterministic Python; LLM adds reasoning text only
+
+[demo.metrics]
+batch_fires = every demo run
+receipt_latency = <1 second after settlement
+savings_accuracy = ±0.01 USD
+amd_call = real (not mocked) — required for hackathon track
+
+[demo.risk_mitigations]
+amd_pricing_unavailable = fall back to ±15% variance simulation
+amd_provisioning_slow = pre-warm; show status events not blocking waits
+x402_unstable = switch to mock at 4h mark; UX identical
+llm_latency = pre-compute reasoning for scripted path
+websocket_drop = auto-reconnect + video backup recorded
+credits_exhausted = cap max_tokens=50; hard stop at $50/account
+
+# ─────────────────────────────────────────────
+# SCOPE MANAGEMENT SKILLS
+# ─────────────────────────────────────────────
+
+[scope.never_cut]
+savings_counter = core demo payoff
+x402_receipt_feed = hackathon track requirement
+agent_activity_log = required for "agentic" qualifier
+three_archetypes_in_ui = Renter + Batcher A/B + Solo must be visible
+real_amd_call = mock-only disqualifies from AMD hackathon
+
+[scope.drop_if_behind]
+subleased_renter_flow = cut by Day 5
+langchain_wrapping = drop by Day 5 (run pure Python rules)
+real_x402 = switch to mock by Day 3 if not working
+strategist_wait_logic = simplify to BATCH|RUN_NOW only by Day 4
+real_provisioning_api = use inference endpoint as proxy by Day 6
+websocket_realtime = fall back to 2s polling by Day 6
+
+# ─────────────────────────────────────────────
+# SECURITY SKILLS
+# ─────────────────────────────────────────────
+
+[security.secrets]
+rule = NEVER commit .env to version control
+pattern = .env.example with placeholder values committed instead
+wallets = all wallet addresses in environment variables only
+
+[security.credits]
+amd_budget = $100 per account; $200 total (2 team members)
+token_cap = max_tokens=50 per LLM call
+hard_stop = $50 per account guard
+
+# ─────────────────────────────────────────────
+# MULTI-LAYER ROADMAP SKILLS (future reference)
+# ─────────────────────────────────────────────
+
+[roadmap.layer2]
+scope = Multi-cloud GPU: Lambda, CoreWeave, RunPod, AWS spot, GCP TPU
+key_pattern = extend provider interface, not rewrite
+
+[roadmap.layer3]
+scope = Universal compute: CPU, RAM, NVMe, TPU, Apple Silicon, Compute Credits
+key_pattern = Compute Credit (CC) abstraction as stable unit of account
+
+[roadmap.layer4]
+scope = Intelligence: predictive pricing, workload fingerprinting, anomaly detection
+key_pattern = ML models trained on Layer 1–3 transaction history
+
+[roadmap.layer5]
+scope = Edge/On-prem: enterprise clusters, university HPC, personal GPU pools
+key_pattern = overflow routing when cloud spot > threshold
+
+[roadmap.layer6]
+scope = Ecosystem: compute futures, hedging instruments, Intelligence API, CI/CD backend
+key_pattern = financial derivatives layer on top of compute exchange
+
+# ─────────────────────────────────────────────
+# META-SKILLS (agent orchestration patterns)
+# ─────────────────────────────────────────────
+
+[meta.orchestration]
+pattern = dependency-ordered agent pipeline
+principle = agents own their scope end-to-end; no scope overlap
+handoff = each agent outputs to queue or file that next agent consumes
+verification = separate verifier agent runs after integration
+
+[meta.timebox]
+rule = hard timeboxes prevent scope creep (X402 = 4h, LangChain = drop by Day 5)
+fallback_must_be_identical_ux = mock paths must produce same visual output as real paths
+demo_first = if behind, cut backend complexity before cutting UI visibility
+
+[meta.risk_handling]
+priority = never cut user-facing proof points
+mock_everything_except_amd = AMD call must be real; everything else can mock
+video_backup = always record backup before live demo
+stable_network = run backend on stable connection (not hotel WiFi)
+
+# ─────────────────────────────────────────────
+# SOLANA SUPERSTACK JOURNEY SKILLS (Imported)
+# ─────────────────────────────────────────────
+
+[solana.superstack]
+find-next-crypto-idea = /find-next-crypto-idea | Interview users to discover, rank, or validate crypto ideas
+validate-idea = /validate-idea | Stress-test a crypto project thesis for necessity and wedge
+competitive-landscape = /competitive-landscape | Analyze competitors and existing protocols in the Solana ecosystem
+scaffold-project = /scaffold-project | Initialize Solana/Anchor project with recommended directory structure
+build-with-claude = /build-with-claude | Step-by-step guided implementation of Solana MVP
+review-and-iterate = /review-and-iterate | Security and architectural review of Solana programs
+deploy-to-mainnet = /deploy-to-mainnet | Production deployment workflow for Solana programs
+colosseum-copilot = /colosseum-copilot | Hackathon-specific data and gap analysis
+path = C:\Users\ISMT\.claude\skills\
+status = active | auto-discovered via global environment
